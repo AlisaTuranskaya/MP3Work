@@ -1,35 +1,46 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using TagLib.Riff;
 
 namespace Mp3
 {
     class Program
     {
+        private static Logger _logger;
         static void Main(string[] args)
         {
-            var folderPath = @"C:\Users\Lisagi\Music\test\";
-            var musicDirectory = new DirectoryInfo(folderPath);
-            var fileNames = musicDirectory.GetFileSystemInfos("*.mp3").OrderByDescending(x => x.CreationTime)
-                .Select(x => new { FullName = x.FullName, Name = x.Name }).ToArray();
+            if (args.Length != 1)
+                return;
 
-            var logPath = string.Format("C:\\Users\\Lisagi\\Music\\test\\{0}.txt", DateTime.Now.ToString(@"MM-dd-yyyy-HH-mm"));
+            var directoryPath = args.ElementAt(0);
+            var musicDirectory = new DirectoryInfo(directoryPath);
+            var fileNames = musicDirectory.GetFileSystemInfos("*.mp3").OrderBy(x => x.CreationTime)
+                .Select(x => new { x.FullName, x.Name }).ToArray();
 
-            if (System.IO.File.Exists(logPath))
-                System.IO.File.Delete(logPath);
+            var percent = Convert.ToInt32(Math.Round((float)fileNames.Length / 100));
+            var logFilePath = $"{directoryPath}{DateTime.Now:MM-dd-yyyy-HH-mm}.txt";
 
-            var fileStream = System.IO.File.Create(logPath);
+            if (File.Exists(logFilePath))
+                File.Delete(logFilePath);
+
+            var fileStream = File.Create(logFilePath);
             fileStream.Close();
 
-            using (StreamWriter logFile = new StreamWriter(logPath))
+            _logger = new Logger();
+
+            using (var logFile = new StreamWriter(logFilePath))
             {
-                foreach (var fileName in fileNames)
+                for (int index = 0; index < fileNames.Length; index++)
+                {
+                    if (index % percent == 0)
+                        ProgressDisplay.RenderConsoleProgress(index / percent);
+
+                    var fileName = fileNames[index];
                     CorrectFileTags(fileName.FullName, fileName.Name, logFile);
+                }
             }
 
-            Console.WriteLine("completed");
+            Console.WriteLine("Completed");
             Console.ReadKey();
         }
 
@@ -44,45 +55,36 @@ namespace Mp3
             }
 
             audioFile.Tag.Album = "Неизвестный альбом";
-            if (parts.Length == 1)
+            switch (parts.Length)
             {
-                audioFile.Tag.Title = parts[0];
-                Log(logFile, fileName, parts[0], null, "One part");
+                case 1:
+                    audioFile.Tag.Title = parts[0];
+                    _logger.Log(logFile, fileName, parts[0], null, "One part");
+                    break;
+                case 2:
+                    audioFile.Tag.AlbumArtists = new[] { parts[0] };
+                    audioFile.Tag.Performers = new[] { parts[0] };
+                    audioFile.Tag.Title = parts[1];
+                    _logger.Log(logFile, fileName, parts[0], parts[1], "Success");
+                    break;
+                case 3:
+                    audioFile.Tag.AlbumArtists = new[] { parts[0] };
+                    audioFile.Tag.Performers = new[] { parts[0] };
+                    audioFile.Tag.Title = string.Format(parts[1], "+", parts[2]);
+                    _logger.Log(logFile, fileName, parts[0], parts[1], "Combined last two");
+                    break;
+                default:
+                    _logger.Log(logFile, fullFileName, parts[0], parts[1], "Skipped");
+                    break;
             }
-            else if (parts.Length == 2)
-            {
-                audioFile.Tag.AlbumArtists = new[] { parts[0] };
-                audioFile.Tag.Performers = new[] { parts[0] };
-                audioFile.Tag.Title = parts[1];
-                Log(logFile, fileName, parts[0], parts[1], "Success");
-            }
-            else if (parts.Length == 3)
-            {
-                audioFile.Tag.AlbumArtists = new[] { parts[0] };
-                audioFile.Tag.Performers = new[] { parts[0] };
-                audioFile.Tag.Title = string.Format(parts[1], "+", parts[2]);
-                Log(logFile, fileName, parts[0], parts[1], "Combined last two");
-            }
-            else
-            {
-                Log(logFile, fullFileName, parts[0], parts[1], "Skip");
-            }
-
-            audioFile.Save();
-        }
-
-        private static void Log(StreamWriter file, string fileName, string title, string artist, string status)
-        {
-            var logRecord = string.Format("status: {0}, fileName: {1}, title: {2}, artist: {3}", status, fileName, title, artist);
 
             try
             {
-                file.WriteLine(logRecord);
-             //   file.Flush();
+                audioFile.Save();
             }
-            catch (Exception ex)
+            catch (UnauthorizedAccessException exception)
             {
-
+                _logger.Log(logFile, exception.Message);
             }
         }
     }
